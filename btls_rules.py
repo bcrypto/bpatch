@@ -1794,19 +1794,20 @@ RULES = [
     },
     {
         "id": "statem_clnt.key_exchange_expected",
-        "desc": "клиент должен ожидать сообщение ServerKeyExchange для эфемерных и psk наборов"
-                "Без этого он воспримет ServerKeyExchange как неожиданное сообщение и оборвёт связь",
+        "desc": "клиент должен ожидать сообщение ServerKeyExchange для эфемерных наборов. "
+                "Без этого он воспримет ServerKeyExchange как неожиданное сообщение и оборвёт связь. "
+                "Для DHT-PSK сообщение необязательно (только psk_identity_hint, см. SSL_PSK)",
         "file": "ssl/statem/statem_clnt.c",
         "op": "replace",
-        "guard": "SSL_kBDHE | SSL_kBDHEPSK | SSL_kBDHTPSK",
+        "guard": "SSL_kBDHE | SSL_kBDHEPSK)) {",
         "conditions": [
             {"when": NEW,
              "anchor": r"    if \(alg_k & \(SSL_kDHE \| SSL_kECDHE \| SSL_kDHEPSK \| SSL_kECDHEPSK \| SSL_kSRP\)\) \{",
              "payload": ("    if (alg_k & (SSL_kDHE | SSL_kECDHE | SSL_kDHEPSK | SSL_kECDHEPSK |\n"
-                         "        SSL_kSRP  | SSL_kBDHE | SSL_kBDHEPSK | SSL_kBDHTPSK)) {")},
+                         "        SSL_kSRP  | SSL_kBDHE | SSL_kBDHEPSK)) {")},
             {"when": "<3.5",
              "anchor": r"                 \| SSL_kSRP\)\) \{",
-             "payload": "                 | SSL_kSRP | SSL_kBDHE | SSL_kBDHEPSK | SSL_kBDHTPSK)) {"},
+             "payload": "                 | SSL_kSRP | SSL_kBDHE | SSL_kBDHEPSK)) {"},
         ],
     },
     {
