@@ -13,8 +13,13 @@ and [bee2prv](https://github.com/bcrypto/bee2prv) (provider).
 ## Usage
 
 ```
-./apply.sh <openssl source root> [--dry-run|--check|--revert]
+./apply.sh <openssl source root> [--dry-run|--check|--revert] [--provider]
 ```
+
+Rules are selected by the OpenSSL version (layout of the sources) and by the
+build mode: `engine` for bee2evp on OpenSSL 3.x (default), `provider` for
+bee2prv. OpenSSL 4 has no engines and is always built in the `provider` mode;
+for OpenSSL 3.5 with bee2prv pass `--provider` or set `BTLS_PROVIDER=1`.
 
 Without an option, `apply.sh` copies `btls/btls.{c,h}` (`btls/legacy` for
 OpenSSL 1.1.1) into `ssl/`, registers the identifiers from `btls/objects.txt`
