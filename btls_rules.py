@@ -13,13 +13,9 @@ NEW = ">=3.5" # OpenSSL 3.5+ — исходники переформатиров
 OLD3 = ">=3.0,<3.5" # провайдеры, но старый стиль.
 V3 = ">=3.0" # любая 3.x — там, где стиль не важен.
 V111 = "<3.0" # 1.1.1 — до провайдеров
-V4 = ">=4.0" # OpenSSL 4: нет плагинов (engine), алгоритмы -- в провайдере
-NEW3 = ">=3.5,<4.0" # 3.5+, но не 4 (правки только для плагина)
-V3ONLY = ">=3.0,<4.0" # любая 3.x, но не 4 (правки только для плагина)
+V4 = ">=4.0" # OpenSSL 4 (только provider, см. "mode")
 V30 = ">=3.0,<3.2" # 3.0 LTS (и 3.1): до SSL_CONNECTION, tls13_enc.c как в 1.1.1
 
-STDERR = ">=3.5.6" # печатает через BIO_printf,
-STDOUT = "<3.5.6" # через printf
 
 _CIPHERSUITES_OPT = """\
             if (!strcmp(opt_flag(), "-ciphersuites"))
@@ -275,8 +271,8 @@ RULES = [
         "anchor": SSL_ARGS_BLOCK,
         "guard": '!strcmp(opt_flag(), "-ciphersuites")',
         "conditions": [
-            {"when": STDERR, "payload": CIPHERSUITES_OPT_STDERR},
-            {"when": STDOUT, "payload": CIPHERSUITES_OPT_STDOUT},
+            {"when": ">=3.5.6", "payload": CIPHERSUITES_OPT_STDERR},
+            {"when": "<3.5.6", "payload": CIPHERSUITES_OPT_STDOUT},
         ],
     },
     # Использование дефолтного psk набора на стороне клиента.
@@ -300,8 +296,8 @@ RULES = [
         "anchor": SSL_ARGS_BLOCK,
         "guard": '!strcmp(opt_flag(), "-ciphersuites")',
         "conditions": [
-            {"when": STDERR, "payload": CIPHERSUITES_OPT_STDERR},
-            {"when": STDOUT, "payload": CIPHERSUITES_OPT_STDOUT},
+            {"when": ">=3.5.6", "payload": CIPHERSUITES_OPT_STDERR},
+            {"when": "<3.5.6", "payload": CIPHERSUITES_OPT_STDOUT},
         ],
     },
     # Использование дефолтного psk набора на стороне сервера.
@@ -325,11 +321,12 @@ RULES = [
     # Трансляция params -> ctrl.
     {
         "id": "ctrl_params.fix_bign_ecx",
+        "mode": "engine",
         "desc": "По заданному имени группы получаем ctrl команду:"
                 "переводит bign-curve256v1 в NID и ложит в p1, без этого"
                 "openssl genpkey -pkeyopt params:bign-curve256v1 не обработается при engine",
         "file": "crypto/evp/ctrl_params_translate.c",
-        "when": V3ONLY,
+        "when": V3,
         "op": "insert_before",
         "anchor": r"/\*-\n \* The translation table itself\n",
         "guard": "fix_bign_ecx",
@@ -338,9 +335,10 @@ RULES = [
     # Добавление записей в таблицу трансляций.
     {
         "id": "ctrl_params.bign_entries",
+        "mode": "engine",
         "desc": "добавляем две записи в таблице трансляций: для генерации параметров и для генерации ключа",
         "file": "crypto/evp/ctrl_params_translate.c",
-        "when": V3ONLY,
+        "when": V3,
         "op": "replace",
         "anchor": (r"(    \{ (OSSL_ACTION_SET|SET), EVP_PKEY_X448, EVP_PKEY_X448,"
                    r" EVP_PKEY_OP_PARAMGEN, -1, NULL, NULL,\n"
@@ -357,10 +355,11 @@ RULES = [
     # Изменение условие на разборку PARAMETERS.
     {
         "id": "pem_pkey.params_without_key",
+        "mode": "engine",
         "desc": "до: разбирали PARAMETERS только если задан запрашивали ключ,"
                 "после: вдаже если не запрашивали (чтобы прочитать PEM с параметрами кривой bign)",
         "file": "crypto/pem/pem_pkey.c",
-        "when": V3ONLY,
+        "when": V3,
         "op": "replace",
         "anchor": (r"\} else if \(\(selection & EVP_PKEY_KEYPAIR\) == 0\n"
                    r"[ ]+&& \(slen = ossl_pem_check_suffix\(nm, \"PARAMETERS\"\)\) > 0\) \{"),
@@ -421,7 +420,7 @@ RULES = [
             "        evp_names_do_all(prov, name_id, btls_name2nid, &cipher->nid);\n"),
     },
 
-    # PRF для PBKDF2 (PKCS#5/8/12): плагин объявлял belt-hmac через
+    # PRF для PBKDF2 (PKCS#5/8/12): engine объявлял belt-hmac через
     # EVP_CTRL_PBE_PRF_NID. Для шифров провайдеров команда не транслируется,
     # и OpenSSL берет hmacWithSHA256. Провайдер отдает PRF параметром
     # "pbe-prf-nid"; если шифр его не знает -- поведение OpenSSL прежнее.
@@ -452,7 +451,7 @@ RULES = [
     #    EVP_get_digestbynid() и не находится: запрашиваем его по имени
     #    до штатного выбора и освобождаем на выходе из CMS_add1_signer().
     # 2) signatureAlgorithm = bign-with-* с параметром NULL (СТБ 34.101.45,
-    #    Д.2; так кодировал плагин). OpenSSL опускает параметры.
+    #    Д.2; так кодировал engine). OpenSSL опускает параметры.
     # Функция cms_generic_sign() появилась в OpenSSL 3.1.
     {
         "id": "cms_sd.fetched_md_decl",
@@ -523,7 +522,7 @@ RULES = [
 
     # CMS EnvelopedData с ключами провайдера (bign).
     # 1) keyEncryptionAlgorithm = bign-keytransport с параметром NULL
-    #    (СТБ 34.101.23, Б.4; плагин делал это через ameth). Для ключей
+    #    (СТБ 34.101.23, Б.4; engine делал это через ameth). Для ключей
     #    провайдеров OpenSSL алгоритм не выставляет.
     # 2) Шифр содержимого (belt) при расшифровании ищется через
     #    EVP_get_cipherbyobj(): при неудаче запрашиваем его по имени.
@@ -799,7 +798,7 @@ RULES = [
     # Проверка подписей X.509 (сертификаты, запросы, СОС): алгоритм
     # хэширования ищется через EVP_get_digestbynid(), который видит только
     # встроенные алгоритмы. belt-hash и bash реализуются провайдером (или
-    # плагином), поэтому при неудаче алгоритм запрашивается по имени.
+    # engine), поэтому при неудаче алгоритм запрашивается по имени.
     {
         "id": "a_verify.fetched_decl",
         "desc": "переменная для запрошенного алгоритма хэширования",
@@ -959,13 +958,14 @@ RULES = [
     # Обновление групп.
     {
         "id": "capabilities.group_list",
+        "mode": "engine",
         "desc": "Объявление 3 групп с идентификаторами 0xFE01/02/03 и уровнями стойкости"
                 "128/192/256 бит, доступные в TLS 1.2 и 1.3",
         "file": "providers/common/capabilities.c",
         "op": "insert_after",
         "guard": "0xFE01",
         "conditions": [
-            {"when": NEW3,
+            {"when": NEW,
              "anchor": r"    /\* 43 \*/ \{ OSSL_TLS_GROUP_ID_SecP384r1MLKEM1024,"
                        r" ML_KEM_1024_SECBITS, TLS1_3_VERSION, 0, -1, -1, 1 \},\n",
              "payload": (
@@ -983,11 +983,12 @@ RULES = [
     # Делаем чтобы libssl находил наши группы.
     {
         "id": "capabilities.param_group_list",
+        "mode": "engine",
         "desc": "делаем чтобы libssl находил наши группы",
         "file": "providers/common/capabilities.c",
         "guard": 'TLS_GROUP_ENTRY("bign-curve256v1"',
         "conditions": [
-            {"when": NEW3, "op": "insert_after",
+            {"when": NEW, "op": "insert_after",
              "anchor": r"#endif /\* !defined\(OPENSSL_NO_TLS_DEPRECATED_EC\) \*/\n",
              "payload": (
                  '    TLS_GROUP_ENTRY("bign-curve256v1", "bign-curve256v1", "bign-curve256v1", 44),\n'
@@ -1502,7 +1503,20 @@ RULES = [
                  "    } else\n"
                  "        EVP_SIGNATURE_free(sig);\n"
                  "    ERR_pop_to_mark();\n\n")},
-            {"when": NEW,
+            {"when": NEW, "mode": "provider",
+             "anchor": r"(^    if \(\(ctx->disabled_auth_mask & SSL_aGOST12\) ==[ ]+SSL_aGOST12\)\n"
+                       r"        ctx->disabled_mkey_mask \|= SSL_kGOST18;\n\n)",
+             "guard": 'EVP_SIGNATURE_fetch(ctx->libctx, "bign"',
+             "payload": (
+                 "$1    ERR_set_mark();\n"
+                 "    sig = EVP_SIGNATURE_fetch(ctx->libctx, \"bign\", ctx->propq);\n"
+                 "    if (sig == NULL) {\n"
+                 "        ctx->disabled_auth_mask |= SSL_aBIGN;\n"
+                 "        ctx->disabled_mkey_mask |= SSL_kBDHE | SSL_kBDHT | SSL_kBDHEPSK | SSL_kBDHTPSK;\n"
+                 "    } else\n"
+                 "        EVP_SIGNATURE_free(sig);\n"
+                 "    ERR_pop_to_mark();\n\n")},
+            {"when": NEW, "mode": "engine",
              "anchor": r"(^    if \(\(ctx->disabled_auth_mask & SSL_aGOST12\) ==[ ]+SSL_aGOST12\)\n"
                        r"        ctx->disabled_mkey_mask \|= SSL_kGOST18;\n\n)",
              "payload": (
@@ -1515,7 +1529,7 @@ RULES = [
                  "        ctx->disabled_auth_mask |= SSL_aBIGN;\n"
                  "        ctx->disabled_mkey_mask |= SSL_kBDHE | SSL_kBDHT | SSL_kBDHEPSK | SSL_kBDHTPSK;\n"
                  "    }\n\n")},
-            {"when": OLD3,
+            {"when": OLD3, "mode": "engine",
              "anchor": r"(^    if \(\(ctx->disabled_auth_mask & SSL_aGOST12\) ==[ ]+SSL_aGOST12\)\n"
                        r"        ctx->disabled_mkey_mask \|= SSL_kGOST18;\n\n)",
              "payload": (
@@ -1748,7 +1762,7 @@ RULES = [
         "conditions": [
             {"when": V4, "anchor": r"(#[ ]*define SSL_ENC_NUM_IDX[ ]+)26",
              "guard_re": r"#[ ]*define SSL_ENC_NUM_IDX[ ]+30", "payload": "${1}30"},
-            {"when": V3ONLY, "anchor": r"(#[ ]*define SSL_ENC_NUM_IDX[ ]+)24",
+            {"when": ">=3.0,<4.0", "anchor": r"(#[ ]*define SSL_ENC_NUM_IDX[ ]+)24",
              "guard_re": r"#[ ]*define SSL_ENC_NUM_IDX[ ]+28", "payload": "${1}28"},
         ],
         "op": "replace",
@@ -2095,13 +2109,14 @@ RULES = [
     },
     {
         "id": "t1_lib.add_provider_groups",
+        "mode": "engine",
         "desc": "",
         "file": "ssl/t1_lib.c",
         "when": V3,
         "op": "replace",
         "guard": "    } else {\n        ctx->group_list_len++;",
         "conditions": [
-            {"when": NEW3,
+            {"when": NEW,
              "anchor": (r"        ctx->group_list_len\+\+;\n        ginf = NULL;\n"
                         r"        EVP_KEYMGMT_free\(keymgmt\);\n    \}\n"),
              "payload": ("        ctx->group_list_len++;\n        ginf = NULL;\n"
@@ -2121,13 +2136,14 @@ RULES = [
     },
     {
         "id": "t1_lib.valid_group",
+        "mode": "engine",
         "desc": "",
         "file": "ssl/t1_lib.c",
         "when": V3,
         "op": "replace",
         "guard": 'ginfo->algorithm, "bign"',
         "conditions": [
-            {"when": NEW3, "anchor": r"        \|\| strcmp\(ginfo->algorithm, \"X448\"\) == 0;",
+            {"when": NEW, "anchor": r"        \|\| strcmp\(ginfo->algorithm, \"X448\"\) == 0;",
              "payload": ("        || strcmp(ginfo->algorithm, \"X448\") == 0\n"
                          "        || strncmp(ginfo->algorithm, \"bign\", 4) == 0;")},
             {"when": OLD3, "anchor": r"           \|\| strcmp\(ginfo->algorithm, \"X448\"\) == 0;",
@@ -2141,7 +2157,7 @@ RULES = [
         "id": "t1_lib.setup_sigalgs_provider_keys",
         "desc": "тип ключа bign задается через управление ключами провайдера",
         "file": "ssl/t1_lib.c",
-        "when": V4,
+        "when": NEW, "mode": "provider",
         "op": "replace",
         "anchor": (r"        if \(!EVP_PKEY_set_type\(tmpkey, lu->sig\)\) \{\n"
                    r"            cache\[i\]\.available = 0;\n"),
@@ -2155,7 +2171,7 @@ RULES = [
         "id": "t1_lib.sigalgs_list_provider_keys",
         "desc": "то же при выводе списка алгоритмов подписи",
         "file": "ssl/t1_lib.c",
-        "when": V4,
+        "when": NEW, "mode": "provider",
         "op": "replace",
         "anchor": (r"        if \(!EVP_PKEY_set_type\(tmpkey, lu->sig\)\) \{\n"
                    r"            enabled = 0;\n"),

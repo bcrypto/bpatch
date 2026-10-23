@@ -16,6 +16,7 @@ RULE_KEYS = (
     "guard",
     "guard_re",
     "when", # openssl version predicate
+    "mode", # engine (bee2evp) | provider (bee2prv); absent -- both
     "count",
     "flags"
 )
@@ -196,12 +197,19 @@ class FragmentsApplier:
         return [file_path for file_path in sorted(self.code)
                 if self.code[file_path] != self.origin[file_path]]
 
-def apply_rule(rule, applier, version, snippet_dir, only_check):
+# Сборка для провайдера bee2prv или для engine bee2evp. В OpenSSL 4 engine
+# нет. Версия в условиях правил описывает только вид исходников OpenSSL.
+def build_mode(version, provider):
+    return "provider" if provider or cmp_openssl_versions(version, (4, 0)) >= 0 else "engine"
+
+def apply_rule(rule, applier, version, snippet_dir, only_check, mode="engine"):
     missed = []
     if_fragments_exist = False
     last_error = None
     for fragment in rule_fragments(rule):
         if not check_openssl_version(fragment.get("when"), version):
+            continue
+        if fragment.get("mode", mode) != mode:
             continue
         if_fragments_exist = True
         file_path = fragment["file"]
@@ -210,15 +218,17 @@ def apply_rule(rule, applier, version, snippet_dir, only_check):
             missed.append(file_path)
             continue
         payload = get_payload(fragment, snippet_dir)
+        when = " [%s]" % ", ".join(x for x in (fragment.get("when"), fragment.get("mode")) if x)
+        when = when if when != " []" else ""
         if check_guard(fragment, payload, code):
-            return "skipped", file_path
+            return "skipped", file_path + when
         if only_check:
             last_error, missed = "error:not-applied", []
             continue
         new_code, status = apply_fragment(fragment, code, payload)
         if status == "applied":
             applier.set(file_path, new_code)
-            return "applied", file_path
+            return "applied", file_path + when
         last_error = status
     if not if_fragments_exist:
         return "n/e", "no fragment for openssl %s" % print_openssl_version(version)
@@ -265,6 +275,8 @@ def main():
     g.add_argument("--apply", action="store_true", help="write changes")
     g.add_argument("--check", action="store_true", help="report applied state")
     g.add_argument("--revert", action="store_true", help="restore from backups")
+    ap.add_argument("--provider", action="store_true",
+                    help="OpenSSL 3.x with the bee2prv provider instead of the bee2evp engine")
     args = ap.parse_args()
 
     rules, snippets_dir = load_rules(args.rules)
@@ -276,12 +288,13 @@ def main():
         print("ERROR    cannot detect the OpenSSL version of %s" % args.root,
               file=sys.stderr)
         return 1
-    print("# openssl %s in %s" % (print_openssl_version(version), args.root))
+    mode = build_mode(version, args.provider)
+    print("# openssl %s in %s, %s" % (print_openssl_version(version), args.root, mode))
 
     applier, ret = FragmentsApplier(args.root), 0
     counts = {}
     for rule in rules:
-        status, detail = apply_rule(rule, applier, version, snippets_dir, args.check)
+        status, detail = apply_rule(rule, applier, version, snippets_dir, args.check, mode)
         tag = status.split(":")[0]
         counts[tag] = counts.get(tag, 0) + 1
         print("%-8s %-34s %s" % (tag.upper(), rule["id"], detail))
